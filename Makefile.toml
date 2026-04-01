@@ -1,0 +1,101 @@
+# Makefile.toml – task definitions for cargo-make
+#
+# Install cargo-make once:
+#   cargo install cargo-make
+#
+# Then run any task with:
+#   cargo make <task>
+
+[config]
+default_to_workspace = false
+
+# ─── Meta ─────────────────────────────────────────────────────────────────────
+
+[tasks.default]
+description = "Run the full CI pipeline (fmt-check, lint, build, test)"
+dependencies = ["fmt-check", "lint", "build", "test"]
+
+# ─── Build ────────────────────────────────────────────────────────────────────
+
+[tasks.build]
+description = "Compile the project in debug mode"
+command = "cargo"
+args = ["build"]
+
+[tasks.build-release]
+description = "Compile the project in release mode"
+command = "cargo"
+args = ["build", "--release"]
+
+# ─── Tests ────────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run all unit and integration tests"
+command = "cargo"
+args = ["test"]
+
+[tasks.test-verbose]
+description = "Run all tests with verbose output"
+command = "cargo"
+args = ["test", "--", "--nocapture"]
+
+# ─── Linting ──────────────────────────────────────────────────────────────────
+
+[tasks.lint]
+description = "Run Clippy (deny warnings)"
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
+[tasks.lint-fix]
+description = "Run Clippy and auto-apply fixes"
+command = "cargo"
+args = ["clippy", "--fix", "--allow-dirty"]
+
+# ─── Formatting ───────────────────────────────────────────────────────────────
+
+[tasks.fmt]
+description = "Format source code with rustfmt"
+command = "cargo"
+args = ["fmt"]
+
+[tasks.fmt-check]
+description = "Check formatting without modifying files (CI-friendly)"
+command = "cargo"
+args = ["fmt", "--", "--check"]
+
+# ─── Documentation ────────────────────────────────────────────────────────────
+
+[tasks.docs]
+description = "Build and open the rustdoc documentation"
+command = "cargo"
+args = ["doc", "--open", "--no-deps"]
+
+[tasks.docs-build]
+description = "Build rustdoc documentation without opening"
+command = "cargo"
+args = ["doc", "--no-deps"]
+
+# ─── Run ──────────────────────────────────────────────────────────────────────
+
+[tasks.run]
+description = "Run the webhookd server (debug build)"
+command = "cargo"
+args = ["run"]
+
+[tasks.run-release]
+description = "Run the webhookd server (release build)"
+command = "cargo"
+args = ["run", "--release"]
+
+# ─── Clean ────────────────────────────────────────────────────────────────────
+
+[tasks.clean]
+description = "Remove build artefacts"
+command = "cargo"
+args = ["clean"]
+
+# ─── CI ───────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Full CI pipeline: fmt-check, lint, build, test"
+dependencies = ["fmt-check", "lint", "build", "test"]
