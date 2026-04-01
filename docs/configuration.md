@@ -64,7 +64,7 @@ Optional.  When present, requests must carry a secret.
 | Key              | Required | Default | Description |
 |------------------|----------|---------|-------------|
 | `json`           | at most one ² | —  | jq-style path to the secret in a JSON body. |
-| `xml`            | at most one ² | —  | XPath to the secret in an XML body. |
+| `xml`            | at most one ² | —  | Dotted element path to the secret in an XML body (e.g. `"auth.token"`). |
 | `http-header`    | at most one ² | `"X-Webhook-Secret"` | HTTP header carrying the secret. |
 | `secret`         | one of ³ | —       | Static secret string. |
 | `secret-env-var` | one of ³ | —       | Env-var name holding the secret (takes precedence). |
