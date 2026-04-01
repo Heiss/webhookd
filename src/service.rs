@@ -12,6 +12,7 @@ use crate::auth;
 use crate::config::{AuthenticateConfig, ServiceConfig};
 use crate::schema::InputSchema;
 use crate::template;
+use crate::xml_schema::XmlInputSchema;
 use axum::http::{HeaderMap, StatusCode};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -26,6 +27,9 @@ pub enum ServiceError {
 
     #[error("schema validation error: {0}")]
     SchemaError(#[from] crate::schema::SchemaError),
+
+    #[error("XML schema validation error: {0}")]
+    XmlSchemaError(#[from] crate::xml_schema::XmlSchemaError),
 
     #[error("template rendering error: {0}")]
     TemplateError(#[from] template::TemplateError),
@@ -45,7 +49,9 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::AuthFailed(_) => StatusCode::UNAUTHORIZED,
-            Self::SchemaError(_) | Self::InvalidJson(_) => StatusCode::BAD_REQUEST,
+            Self::SchemaError(_) | Self::XmlSchemaError(_) | Self::InvalidJson(_) => {
+                StatusCode::BAD_REQUEST
+            }
             Self::TemplateError(_) | Self::ExecFailed(_) | Self::IoError(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -61,8 +67,10 @@ impl ServiceError {
 pub struct Service {
     /// The endpoint path (e.g. `/webhook/api1`).
     pub endpoint: String,
-    /// Compiled input schema (if configured).
+    /// Compiled JSON input schema (if configured and mimetype is json).
     input_schema: Option<InputSchema>,
+    /// Compiled XML input schema (if configured and mimetype is xml).
+    xml_input_schema: Option<XmlInputSchema>,
     /// Output template string (if configured).
     output_template: Option<String>,
     /// Script to execute (mutually exclusive with `proxy_url`).
@@ -93,10 +101,35 @@ impl Service {
             config.input.clone()
         };
 
-        let input_schema = match input_str {
-            Some(ref s) => Some(InputSchema::compile(s)?),
-            None => None,
-        };
+        // Determine effective mimetype: explicit or inferred from schema content
+        let effective_mimetype = config.mimetype.clone().or_else(|| {
+            input_str.as_ref().and_then(|s| {
+                let trimmed = s.trim();
+                if trimmed.starts_with('{') {
+                    Some("json".to_string())
+                } else if trimmed.starts_with('<') {
+                    Some("xml".to_string())
+                } else {
+                    None
+                }
+            })
+        });
+
+        // Compile the appropriate schema based on mimetype
+        let mut input_schema = None;
+        let mut xml_input_schema = None;
+
+        if let Some(ref schema_str) = input_str {
+            match effective_mimetype.as_deref() {
+                Some("xml") => {
+                    xml_input_schema = Some(XmlInputSchema::compile(schema_str)?);
+                }
+                _ => {
+                    // Default to JSON schema
+                    input_schema = Some(InputSchema::compile(schema_str)?);
+                }
+            }
+        }
 
         // Resolve output template: output-file takes precedence over output
         let output_template = if let Some(ref path) = config.output_file {
@@ -113,11 +146,12 @@ impl Service {
         Ok(Self {
             endpoint: config.endpoint.clone(),
             input_schema,
+            xml_input_schema,
             output_template,
             exec_command: config.exec.clone(),
             proxy_url: config.proxy.clone(),
             authenticate: config.authenticate.clone(),
-            mimetype: config.mimetype.clone(),
+            mimetype: effective_mimetype,
         })
     }
 
@@ -130,7 +164,7 @@ impl Service {
         headers: &HeaderMap,
         body: &str,
     ) -> Result<String, ServiceError> {
-        // 1. Parse body as JSON if we have schema or JSON auth
+        // 1. Parse body as JSON if we have JSON schema or JSON auth
         let parsed_body: Option<Value> = if self.needs_json_body() {
             if body.is_empty() {
                 None
@@ -146,12 +180,14 @@ impl Service {
 
         // 2. Authentication
         for auth_config in &self.authenticate {
-            auth::check_auth(auth_config, headers, parsed_body.as_ref())?;
+            auth::check_auth(auth_config, headers, parsed_body.as_ref(), body)?;
         }
 
         // 3. Schema validation + variable extraction
         let vars: HashMap<String, Value> = if let Some(ref schema) = self.input_schema {
             schema.validate_and_extract(body)?
+        } else if let Some(ref xml_schema) = self.xml_input_schema {
+            xml_schema.validate_and_extract(body)?
         } else {
             HashMap::new()
         };
@@ -182,7 +218,7 @@ impl Service {
 
     /// Check if this service needs the body parsed as JSON.
     fn needs_json_body(&self) -> bool {
-        // Need JSON if we have a schema, or if any auth uses JSON path lookup
+        // Need JSON if we have a JSON schema, or if any auth uses JSON path lookup
         self.input_schema.is_some()
             || self.mimetype.as_deref() == Some("json")
             || self.authenticate.iter().any(|a| a.json.is_some())
@@ -452,6 +488,164 @@ mod tests {
         assert_eq!(
             ServiceError::ExecFailed("x".into()).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    // ── XML schema tests ────────────────────────────────────────────────
+
+    #[test]
+    fn from_config_with_xml_schema() {
+        let mut config = minimal_service_config();
+        config.mimetype = Some("xml".to_string());
+        config.input = Some(
+            r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                        xmlns:whd="https://webhookd.dev/schema">
+                <xs:element name="data">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="id" type="xs:integer"
+                                        whd:assign_value="my_id"/>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+            </xs:schema>"#
+                .to_string(),
+        );
+        let svc = Service::from_config(&config).unwrap();
+        assert!(svc.xml_input_schema.is_some());
+        assert!(svc.input_schema.is_none());
+    }
+
+    #[test]
+    fn from_config_auto_detects_xml_schema() {
+        let mut config = minimal_service_config();
+        // No explicit mimetype, but schema starts with '<'
+        config.input = Some(
+            r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                <xs:element name="data">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="id" type="xs:integer"/>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+            </xs:schema>"#
+                .to_string(),
+        );
+        let svc = Service::from_config(&config).unwrap();
+        assert!(svc.xml_input_schema.is_some());
+        assert!(svc.input_schema.is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_xml_schema_validation_pass() {
+        let mut config = minimal_service_config();
+        config.mimetype = Some("xml".to_string());
+        config.input = Some(
+            r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                        xmlns:whd="https://webhookd.dev/schema">
+                <xs:element name="data">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="id" type="xs:integer"
+                                        whd:assign_value="item_id"/>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+            </xs:schema>"#
+                .to_string(),
+        );
+        config.output = Some("id={{ item_id }}".to_string());
+        config.exec = Some("echo $WEBHOOKD_OUTPUT".to_string());
+        let svc = Service::from_config(&config).unwrap();
+        let headers = HeaderMap::new();
+
+        let result = svc
+            .handle_request(&headers, "<data><id>42</id></data>")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "id=42");
+    }
+
+    #[tokio::test]
+    async fn handle_xml_schema_validation_fail() {
+        let mut config = minimal_service_config();
+        config.mimetype = Some("xml".to_string());
+        config.input = Some(
+            r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                <xs:element name="data">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="id" type="xs:integer"/>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+            </xs:schema>"#
+                .to_string(),
+        );
+        let svc = Service::from_config(&config).unwrap();
+        let headers = HeaderMap::new();
+
+        let err = svc
+            .handle_request(&headers, "<data><id>not-integer</id></data>")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ServiceError::XmlSchemaError(_)));
+    }
+
+    #[tokio::test]
+    async fn full_pipeline_xml_schema_to_template_to_exec() {
+        let config = ServiceConfig {
+            endpoint: "/webhook/xml-test".to_string(),
+            mimetype: Some("xml".to_string()),
+            input: Some(
+                r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                            xmlns:whd="https://webhookd.dev/schema">
+                    <xs:element name="order">
+                        <xs:complexType>
+                            <xs:sequence>
+                                <xs:element name="orderId" type="xs:integer"
+                                            whd:assign_value="oid"/>
+                                <xs:element name="customer" type="xs:string"
+                                            whd:assign_value="cust"/>
+                            </xs:sequence>
+                        </xs:complexType>
+                    </xs:element>
+                </xs:schema>"#
+                    .to_string(),
+            ),
+            output: Some("Order {{ oid }} by {{ cust }}".to_string()),
+            input_file: None,
+            output_file: None,
+            exec: Some("echo $WEBHOOKD_OUTPUT".to_string()),
+            proxy: None,
+            authenticate: vec![AuthenticateConfig {
+                json: None,
+                xml: None,
+                http_header: Some("X-Auth".to_string()),
+                secret: Some("xml-secret".to_string()),
+                secret_env_var: None,
+            }],
+        };
+
+        let svc = Service::from_config(&config).unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Auth", "xml-secret".parse().unwrap());
+
+        let body = "<order><orderId>99</orderId><customer>Alice</customer></order>";
+        let result = svc.handle_request(&headers, body).await.unwrap();
+        assert_eq!(result.trim(), "Order 99 by Alice");
+    }
+
+    #[test]
+    fn xml_schema_error_status_code() {
+        assert_eq!(
+            ServiceError::XmlSchemaError(crate::xml_schema::XmlSchemaError::ValidationFailed(
+                "x".into()
+            ))
+            .status_code(),
+            StatusCode::BAD_REQUEST
         );
     }
 }

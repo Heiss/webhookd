@@ -43,6 +43,8 @@ endpoint = "/webhook/api1"
 # JSON payloads are validated with JSON Schema; XML with XSD.
 # Properties may define `assign_value` to capture values for use in `output`.
 # Mutually exclusive with `input-file` — if both are set, `input-file` wins.
+#
+# JSON Schema example:
 # input = """{
 #   "$schema": "https://json-schema.org/draft/2020-12/schema",
 #   "$id": "https://example.com/product.schema.json",
@@ -57,6 +59,24 @@ endpoint = "/webhook/api1"
 #     }
 #   }
 # }"""
+#
+# XSD example (note the whd: namespace for assign_value):
+# input = """
+# <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+#            xmlns:whd="https://webhookd.dev/schema">
+#   <xs:element name="product">
+#     <xs:complexType>
+#       <xs:sequence>
+#         <xs:element name="productId" type="xs:integer"
+#                     whd:assign_value="my-key"/>
+#         <xs:element name="name" type="xs:string"
+#                     whd:assign_value="product-name"
+#                     minOccurs="0"/>
+#       </xs:sequence>
+#     </xs:complexType>
+#   </xs:element>
+# </xs:schema>
+# """
 
 # [optional] Default: not set
 # Inline output template (Jinja2-style). Variables captured via `assign_value`

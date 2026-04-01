@@ -23,6 +23,7 @@ thiserror = "1"
 toml = "0.9.6"
 jsonschema = "0.29"
 minijinja = "2"
+roxmltree = "0.20"
 
 [dev-dependencies]
 axum-test = "14"
