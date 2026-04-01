@@ -53,8 +53,9 @@ must be configured.
 
 When an `authenticate` block uses `json` or `xml` as its lookup method, the
 MIME type is inferred automatically.  Setting `mimetype` to a *different* value
-than what `authenticate` implies is a configuration error.  Only set `mimetype`
-when no `authenticate` block is used.
+than what `authenticate` implies is a configuration error.  Only explicitly set
+`mimetype` when no `authenticate` block with `json` or `xml` lookup is used, or
+ensure it matches the authenticate lookup method.
 
 ### `[[services.authenticate]]`
 
