@@ -1,0 +1,34 @@
+[package]
+name = "webhookd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = []
+description = "Webhookify your scripts and HTTP API services"
+license = "MIT"
+repository = "https://github.com/Heiss/webhookd"
+readme = "README.md"
+keywords = ["webhook", "http", "automation"]
+categories = ["web-programming", "command-line-utilities"]
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+
+[dev-dependencies]
+axum-test = "14"
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[[bin]]
+name = "webhookd"
+path = "src/main.rs"
+
+[lib]
+name = "webhookd"
+path = "src/lib.rs"
