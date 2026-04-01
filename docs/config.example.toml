@@ -34,7 +34,8 @@ endpoint = "/webhook/api1"
 # * If `authenticate` is configured with `json` or `xml` lookup,
 #   the MIME type is inferred automatically — setting `mimetype` to a
 #   *different* value than what `authenticate` implies is an error.
-# * Only set this when NO `authenticate` block is used.
+# * Only explicitly set this when no `authenticate` block with `json` or
+#   `xml` lookup is used, or ensure it matches the authenticate lookup method.
 # mimetype = "json"
 
 # [optional] Default: not set
