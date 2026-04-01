@@ -117,8 +117,9 @@ exec = "/webhookd/scripts/api1.sh"
 # [optional] jq-style path for JSON bodies.  Implies mimetype = "json".
 # json = "example.path[0].secret"
 
-# [optional] XPath expression for XML bodies.  Implies mimetype = "xml".
-# xml = "//path.to.secret"
+# [optional] Dotted element path for XML bodies.  Implies mimetype = "xml".
+# Traverses nested XML elements, e.g. "auth.token" matches <auth><token>...</token></auth>
+# xml = "auth.token"
 
 # [optional] HTTP header name. Default: "X-Webhook-Secret".
 # http-header = "X-Webhook-Secret"
