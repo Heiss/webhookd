@@ -50,7 +50,7 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!("webhookd listening on {addr}");
 
     let listener = TcpListener::bind(addr).await.expect("bind failed");
