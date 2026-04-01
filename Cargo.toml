@@ -20,6 +20,7 @@ tower = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
+toml = "0.9.6"
 
 [dev-dependencies]
 axum-test = "14"

@@ -1,0 +1,112 @@
+# webhookd configuration file
+#
+# This file documents all available configuration options.
+# Fields marked [mandatory] must be provided.
+# Fields marked [optional] have sensible defaults.
+
+# [mandatory] The port on which the webhookd HTTP server listens.
+# Can also be set via -p / --port on the CLI.
+port = 8080
+
+# [optional] Default: false
+# When enabled, the server automatically restarts if this config file changes.
+# Can also be set via -R / --hot-reload on the CLI.
+hot-reload = false
+
+# [optional] Default: "info"
+# Log verbosity level. Valid values: "debug", "info", "warn", "error"
+log = "info"
+
+# ─── Services ─────────────────────────────────────────────────────────────────
+# Each [[services]] block defines a single webhook endpoint.
+# At least one service must be defined.
+
+[[services]]
+
+# [mandatory] The URL path at which this webhook is reachable.
+endpoint = "/webhook/api1"
+
+# [optional] Default: not set
+# Forces a specific MIME type for request validation ("json" or "xml").
+#
+# * When "json" is set, incoming requests are validated as JSON.
+# * When "xml"  is set, incoming requests are validated as XML.
+# * If `authenticate` is configured with `json` or `xml` lookup,
+#   the MIME type is inferred automatically — setting `mimetype` to a
+#   *different* value than what `authenticate` implies is an error.
+# * Only set this when NO `authenticate` block is used.
+# mimetype = "json"
+
+# [optional] Default: not set
+# Inline input schema used to validate incoming request bodies.
+# JSON payloads are validated with JSON Schema; XML with XSD.
+# Properties may define `assign_value` to capture values for use in `output`.
+# Mutually exclusive with `input-file` — if both are set, `input-file` wins.
+# input = """{
+#   "$schema": "https://json-schema.org/draft/2020-12/schema",
+#   "$id": "https://example.com/product.schema.json",
+#   "title": "Product",
+#   "description": "A product from Acme's catalog",
+#   "type": "object",
+#   "properties": {
+#     "productId": {
+#       "description": "The unique identifier for a product",
+#       "type": "integer",
+#       "assign_value": "my-key"
+#     }
+#   }
+# }"""
+
+# [optional] Default: not set
+# Inline output template (Jinja2-style). Variables captured via `assign_value`
+# in the input schema can be interpolated here.
+# Mutually exclusive with `output-file` — if both are set, `output-file` wins.
+# output = """{
+#   "custom-key": {{ my-key }}
+# }"""
+
+# [optional] Default: not set
+# Path to a file containing the input schema.  When set, `input` is ignored.
+# input-file = "/webhookd/templates/input"
+
+# [optional] Default: not set
+# Path to a file containing the output template.  When set, `output` is ignored.
+# output-file = "/webhookd/templates/output"
+
+# ─── Service action ───────────────────────────────────────────────────────────
+# Exactly ONE of `exec` or `proxy` must be set per service (they are mutually
+# exclusive).
+
+# [mandatory — choose one] Path to a script executed when the endpoint is called.
+exec = "/webhookd/scripts/api1.sh"
+
+# [mandatory — choose one] URL to an HTTP backend to which requests are proxied.
+# proxy = "http://hostname/api/service"
+
+# ─── Authentication ───────────────────────────────────────────────────────────
+# Optional authentication block.  When present, incoming requests must carry a
+# secret that matches the configured value.
+
+# [[services.authenticate]]
+
+# --- Lookup method (at most ONE of json / xml / http-header) ─────────────────
+# Specifies where in the request to find the client-supplied secret.
+# If none is set, `http-header` defaults to "X-Webhook-Secret".
+
+# [optional] jq-style path for JSON bodies.  Implies mimetype = "json".
+# json = "example.path[0].secret"
+
+# [optional] XPath expression for XML bodies.  Implies mimetype = "xml".
+# xml = "//path.to.secret"
+
+# [optional] HTTP header name. Default: "X-Webhook-Secret".
+# http-header = "X-Webhook-Secret"
+
+# --- Secret value (exactly ONE of secret / secret-env-var) ───────────────────
+
+# [optional — choose one] A static secret string.
+# secret = "THIS-IS-YOUR-STATIC-SECRET"
+
+# [optional — choose one] Name of an environment variable that holds the secret.
+# Takes precedence over `secret` if both are set.
+# secret-env-var = "WEBHOOKD_SECRET"

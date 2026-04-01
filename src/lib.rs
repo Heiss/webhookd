@@ -4,6 +4,8 @@
 //! Callers build a [`Config`], construct an [`App`] from it, and pass the
 //! resulting Axum router to a TCP listener.
 
+pub mod config;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
