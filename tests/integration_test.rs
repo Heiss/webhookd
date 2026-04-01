@@ -172,3 +172,145 @@ async fn auth_fails_with_missing_header() {
     let response = server.post("/webhook/secured").await;
     response.assert_status(axum::http::StatusCode::UNAUTHORIZED);
 }
+
+// ─── XML Schema validation tests ────────────────────────────────────────────
+
+fn xml_schema_app() -> TestServer {
+    let config = WebhookdConfig::parse(
+        r#"
+        port = 8080
+        [[services]]
+        endpoint = "/webhook/xml-validated"
+        mimetype = "xml"
+        exec = "echo $WEBHOOKD_OUTPUT"
+        input = """
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:whd="https://webhookd.dev/schema">
+            <xs:element name="product">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="productId" type="xs:integer"
+                                    whd:assign_value="item_id"/>
+                        <xs:element name="name" type="xs:string"
+                                    whd:assign_value="item_name"
+                                    minOccurs="0"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+        </xs:schema>
+        """
+        output = "id={{ item_id }}, name={{ item_name }}"
+    "#,
+    )
+    .unwrap();
+
+    let app = App::from_config(&config).unwrap();
+    TestServer::new(app.router()).expect("failed to create test server")
+}
+
+#[tokio::test]
+async fn xml_schema_validation_passes_and_template_renders() {
+    let server = xml_schema_app();
+    let response = server
+        .post("/webhook/xml-validated")
+        .text("<product><productId>42</productId><name>Widget</name></product>")
+        .await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("id=42"), "body was: {body}");
+    assert!(body.contains("name=Widget"), "body was: {body}");
+}
+
+#[tokio::test]
+async fn xml_schema_validation_fails_for_wrong_type() {
+    let server = xml_schema_app();
+    let response = server
+        .post("/webhook/xml-validated")
+        .text("<product><productId>not-a-number</productId></product>")
+        .await;
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn xml_schema_validation_fails_for_missing_required() {
+    let server = xml_schema_app();
+    let response = server
+        .post("/webhook/xml-validated")
+        .text("<product><name>Widget</name></product>")
+        .await;
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn xml_schema_validation_fails_for_wrong_root() {
+    let server = xml_schema_app();
+    let response = server
+        .post("/webhook/xml-validated")
+        .text("<order><productId>1</productId></order>")
+        .await;
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn xml_schema_optional_element_excluded() {
+    let server = xml_schema_app();
+    let response = server
+        .post("/webhook/xml-validated")
+        .text("<product><productId>7</productId></product>")
+        .await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("id=7"), "body was: {body}");
+}
+
+// ─── XML Authentication tests ───────────────────────────────────────────────
+
+fn xml_auth_app() -> TestServer {
+    let config = WebhookdConfig::parse(
+        r#"
+        port = 8080
+        [[services]]
+        endpoint = "/webhook/xml-secured"
+        mimetype = "xml"
+        exec = "echo xml-authenticated"
+        [[services.authenticate]]
+        xml = "auth.token"
+        secret = "xml-secret"
+    "#,
+    )
+    .unwrap();
+
+    let app = App::from_config(&config).unwrap();
+    TestServer::new(app.router()).expect("failed to create test server")
+}
+
+#[tokio::test]
+async fn xml_auth_passes_with_correct_secret() {
+    let server = xml_auth_app();
+    let response = server
+        .post("/webhook/xml-secured")
+        .text("<root><auth><token>xml-secret</token></auth></root>")
+        .await;
+    response.assert_status_ok();
+    assert!(response.text().contains("xml-authenticated"));
+}
+
+#[tokio::test]
+async fn xml_auth_fails_with_wrong_secret() {
+    let server = xml_auth_app();
+    let response = server
+        .post("/webhook/xml-secured")
+        .text("<root><auth><token>wrong</token></auth></root>")
+        .await;
+    response.assert_status(axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn xml_auth_fails_with_missing_path() {
+    let server = xml_auth_app();
+    let response = server
+        .post("/webhook/xml-secured")
+        .text("<root><other>data</other></root>")
+        .await;
+    response.assert_status(axum::http::StatusCode::UNAUTHORIZED);
+}

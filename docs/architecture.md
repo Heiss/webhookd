@@ -47,8 +47,9 @@ HTTP Client
 | `src/lib.rs`       | App router, dispatches requests to matching services           |
 | `src/config.rs`    | TOML configuration types, parsing, and validation              |
 | `src/schema.rs`    | JSON Schema validation with `assign_value` extraction          |
+| `src/xml_schema.rs`| XSD validation with `whd:assign_value` extraction              |
 | `src/template.rs`  | Jinja2-style output template rendering (via MiniJinja)         |
-| `src/auth.rs`      | Request authentication (header / JSON body path lookup)        |
+| `src/auth.rs`      | Request authentication (header / JSON / XML path lookup)       |
 | `src/service.rs`   | Service handler -- ties auth, schema, template, exec together  |
 | `tests/`           | Integration tests using `axum-test`                            |
 | `docs/`            | Project documentation and example config                       |
@@ -64,20 +65,27 @@ If `[[services.authenticate]]` is configured, the handler verifies the
 request carries a valid secret.  The secret can be looked up from:
 - An HTTP header (default: `X-Webhook-Secret`)
 - A JSON body path (jq-style dotted path)
+- An XML body path (dotted element path)
 
 The expected secret can come from a static config string or an environment
 variable (`secret-env-var` takes precedence).
 
-### 2. Schema Validation (`schema.rs`)
+### 2. Schema Validation (`schema.rs` / `xml_schema.rs`)
 
-If an `input` schema is provided, the JSON payload is validated against it
-using the `jsonschema` crate.  Invalid payloads are rejected with HTTP 400.
+If an `input` schema is provided, the payload is validated against it:
+- **JSON payloads** are validated using JSON Schema (`jsonschema` crate)
+- **XML payloads** are validated using XSD-like schemas (`roxmltree` crate)
 
-### 3. Variable Extraction (`schema.rs`)
+Invalid payloads are rejected with HTTP 400.  The schema type is
+auto-detected from the content (JSON starts with `{`, XSD starts with `<`).
 
-Properties in the JSON Schema that define `"assign_value": "var-name"` have
-their values captured from the payload into a variable map.  This works at
-any nesting depth.
+### 3. Variable Extraction (`schema.rs` / `xml_schema.rs`)
+
+- **JSON**: Properties with `"assign_value": "var-name"` are captured
+- **XML**: Elements with `whd:assign_value="var-name"` are captured
+
+Values are extracted from the payload into a variable map at any nesting
+depth.
 
 ### 4. Template Rendering (`template.rs`)
 

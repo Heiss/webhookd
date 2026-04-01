@@ -27,6 +27,7 @@ pub mod config;
 pub mod schema;
 pub mod service;
 pub mod template;
+pub mod xml_schema;
 
 use axum::{
     body::Body,

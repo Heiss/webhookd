@@ -9,6 +9,7 @@
 //! The secret can be looked up from:
 //! - An HTTP header (default: `X-Webhook-Secret`)
 //! - A JSON body path (jq-style dotted path)
+//! - An XML body path (dotted element path, e.g. `"auth.token"`)
 //!
 //! # Secret sources
 //!
@@ -19,6 +20,7 @@
 //! If both are set, `secret-env-var` takes precedence.
 
 use crate::config::AuthenticateConfig;
+use crate::xml_schema;
 use axum::http::HeaderMap;
 use serde_json::Value;
 use thiserror::Error;
@@ -33,10 +35,14 @@ pub enum AuthError {
 /// Check authentication for a request against the configured auth block.
 ///
 /// Returns `Ok(())` if authentication passes, or an `AuthError` if it fails.
+///
+/// `body` is the parsed JSON body (if available), `raw_body` is the raw
+/// request body string (needed for XML path lookup).
 pub fn check_auth(
     auth: &AuthenticateConfig,
     headers: &HeaderMap,
     body: Option<&Value>,
+    raw_body: &str,
 ) -> Result<(), AuthError> {
     // Resolve the expected secret
     let expected_secret = resolve_secret(auth)?;
@@ -49,6 +55,11 @@ pub fn check_auth(
         })?;
         extract_json_path(body, json_path).ok_or_else(|| {
             AuthError::Unauthorized(format!("secret not found at JSON path '{json_path}'"))
+        })?
+    } else if let Some(ref xml_path) = auth.xml {
+        // Look up secret from XML body
+        xml_schema::extract_xml_path(raw_body, xml_path).ok_or_else(|| {
+            AuthError::Unauthorized(format!("secret not found at XML path '{xml_path}'"))
         })?
     } else {
         // Look up secret from HTTP header
@@ -161,7 +172,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("X-Webhook-Secret", HeaderValue::from_static("my-secret"));
 
-        assert!(check_auth(&auth, &headers, None).is_ok());
+        assert!(check_auth(&auth, &headers, None, "").is_ok());
     }
 
     #[test]
@@ -170,7 +181,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("X-Webhook-Secret", HeaderValue::from_static("wrong"));
 
-        assert!(check_auth(&auth, &headers, None).is_err());
+        assert!(check_auth(&auth, &headers, None, "").is_err());
     }
 
     #[test]
@@ -178,7 +189,7 @@ mod tests {
         let auth = auth_with_secret("my-secret");
         let headers = HeaderMap::new();
 
-        assert!(check_auth(&auth, &headers, None).is_err());
+        assert!(check_auth(&auth, &headers, None, "").is_err());
     }
 
     #[test]
@@ -187,7 +198,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("X-My-Token", HeaderValue::from_static("token123"));
 
-        assert!(check_auth(&auth, &headers, None).is_ok());
+        assert!(check_auth(&auth, &headers, None, "").is_ok());
     }
 
     #[test]
@@ -196,7 +207,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("X-My-Token", HeaderValue::from_static("bad"));
 
-        assert!(check_auth(&auth, &headers, None).is_err());
+        assert!(check_auth(&auth, &headers, None, "").is_err());
     }
 
     // ── JSON path auth ──────────────────────────────────────────────────
@@ -207,7 +218,7 @@ mod tests {
         let headers = HeaderMap::new();
         let body = json!({"auth": {"secret": "s3cret"}});
 
-        assert!(check_auth(&auth, &headers, Some(&body)).is_ok());
+        assert!(check_auth(&auth, &headers, Some(&body), "").is_ok());
     }
 
     #[test]
@@ -216,7 +227,7 @@ mod tests {
         let headers = HeaderMap::new();
         let body = json!({"auth": {"secret": "wrong"}});
 
-        assert!(check_auth(&auth, &headers, Some(&body)).is_err());
+        assert!(check_auth(&auth, &headers, Some(&body), "").is_err());
     }
 
     #[test]
@@ -225,7 +236,7 @@ mod tests {
         let headers = HeaderMap::new();
         let body = json!({"auth": {}});
 
-        assert!(check_auth(&auth, &headers, Some(&body)).is_err());
+        assert!(check_auth(&auth, &headers, Some(&body), "").is_err());
     }
 
     #[test]
@@ -233,7 +244,7 @@ mod tests {
         let auth = auth_with_json_path("auth.secret", "s3cret");
         let headers = HeaderMap::new();
 
-        assert!(check_auth(&auth, &headers, None).is_err());
+        assert!(check_auth(&auth, &headers, None, "").is_err());
     }
 
     // ── env var secret ──────────────────────────────────────────────────
@@ -254,7 +265,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("X-Webhook-Secret", HeaderValue::from_static("env-secret"));
 
-        assert!(check_auth(&auth, &headers, None).is_ok());
+        assert!(check_auth(&auth, &headers, None, "").is_ok());
 
         // Clean up
         std::env::remove_var("WEBHOOKD_TEST_SECRET");
@@ -275,7 +286,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         // Using the env var value, not the static secret
         headers.insert("X-Webhook-Secret", HeaderValue::from_static("env-value"));
-        assert!(check_auth(&auth, &headers, None).is_ok());
+        assert!(check_auth(&auth, &headers, None, "").is_ok());
 
         // Static secret should NOT work
         let mut headers2 = HeaderMap::new();
@@ -283,7 +294,7 @@ mod tests {
             "X-Webhook-Secret",
             HeaderValue::from_static("static-secret"),
         );
-        assert!(check_auth(&auth, &headers2, None).is_err());
+        assert!(check_auth(&auth, &headers2, None, "").is_err());
 
         std::env::remove_var("WEBHOOKD_TEST_PREC");
     }
@@ -321,5 +332,53 @@ mod tests {
     fn extract_number_as_string() {
         let body = json!({"count": 42});
         assert_eq!(extract_json_path(&body, "count"), Some("42".to_string()));
+    }
+
+    // ── XML path auth ───────────────────────────────────────────────────
+
+    fn auth_with_xml_path(path: &str, secret: &str) -> AuthenticateConfig {
+        AuthenticateConfig {
+            json: None,
+            xml: Some(path.to_string()),
+            http_header: None,
+            secret: Some(secret.to_string()),
+            secret_env_var: None,
+        }
+    }
+
+    #[test]
+    fn auth_xml_path_success() {
+        let auth = auth_with_xml_path("auth.token", "s3cret");
+        let headers = HeaderMap::new();
+        let raw_body = "<root><auth><token>s3cret</token></auth></root>";
+
+        assert!(check_auth(&auth, &headers, None, raw_body).is_ok());
+    }
+
+    #[test]
+    fn auth_xml_path_wrong_value() {
+        let auth = auth_with_xml_path("auth.token", "s3cret");
+        let headers = HeaderMap::new();
+        let raw_body = "<root><auth><token>wrong</token></auth></root>";
+
+        assert!(check_auth(&auth, &headers, None, raw_body).is_err());
+    }
+
+    #[test]
+    fn auth_xml_path_missing() {
+        let auth = auth_with_xml_path("auth.token", "s3cret");
+        let headers = HeaderMap::new();
+        let raw_body = "<root><auth></auth></root>";
+
+        assert!(check_auth(&auth, &headers, None, raw_body).is_err());
+    }
+
+    #[test]
+    fn auth_xml_path_deeply_nested() {
+        let auth = auth_with_xml_path("security.credentials.secret", "deep-secret");
+        let headers = HeaderMap::new();
+        let raw_body = "<root><security><credentials><secret>deep-secret</secret></credentials></security></root>";
+
+        assert!(check_auth(&auth, &headers, None, raw_body).is_ok());
     }
 }
